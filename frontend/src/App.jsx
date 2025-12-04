@@ -3,6 +3,7 @@ import LandingPage from "./pages/LandingPage";
 import FlightResults from "./pages/FlightResults";
 import FlightBooking from "./pages/FlightBooking";
 import BookingSuccess from "./pages/BookingSuccess";
+import Toast from "./components/Toast";
 import { searchFlights, bookFlight } from "./services/api";
 
 function App() {
@@ -12,6 +13,17 @@ function App() {
   const [bookingCode, setBookingCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [searchParams, setSearchParams] = useState(null);
+
+  // Toast state
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = "error") => {
+    setToast({ message, type });
+  };
+
+  const hideToast = () => {
+    setToast(null);
+  };
 
   const handleSearch = async (searchData) => {
     setLoading(true);
@@ -26,10 +38,18 @@ function App() {
         searchData.passengers
       );
 
-      setFlights(results);
-      setCurrentPage("results");
+      if (results.length === 0) {
+        showToast(
+          "Tidak ada penerbangan ditemukan untuk rute ini. Coba tanggal atau rute lain.",
+          "warning"
+        );
+      } else {
+        setFlights(results);
+        setCurrentPage("results");
+        showToast(`Ditemukan ${results.length} penerbangan!`, "success");
+      }
     } catch (err) {
-      alert(err.message);
+      showToast(err.message, "error");
     } finally {
       setLoading(false);
     }
@@ -47,8 +67,9 @@ function App() {
       const result = await bookFlight(selectedFlight, travelerData);
       setBookingCode(result.booking_code);
       setCurrentPage("success");
+      showToast("Booking berhasil!", "success");
     } catch (err) {
-      alert(err.message);
+      showToast(err.message, "error");
     } finally {
       setLoading(false);
     }
@@ -64,6 +85,11 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 relative overflow-hidden">
+      {/* Toast Notification */}
+      {toast && (
+        <Toast message={toast.message} type={toast.type} onClose={hideToast} />
+      )}
+
       {/* Background Elements - Only show on non-landing pages */}
       {currentPage !== "landing" && (
         <div className="fixed inset-0 pointer-events-none">
@@ -101,6 +127,7 @@ function App() {
             onBook={handleBook}
             onBack={() => setCurrentPage("results")}
             loading={loading}
+            searchParams={searchParams}
           />
         )}
 

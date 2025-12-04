@@ -6,17 +6,15 @@ from .models import Booking
 import requests
 import traceback
 
+AMADEUS_BASE_URL = "https://test.api.amadeus.com"
+
 amadeus = Client(
     client_id=settings.AMADEUS_CLIENT_ID,
     client_secret=settings.AMADEUS_CLIENT_SECRET
 )
 
-# Base URL for Amadeus API
-AMADEUS_BASE_URL = "https://test.api.amadeus.com"
-
 
 def get_amadeus_token():
-    """Get access token from Amadeus"""
     url = f"{AMADEUS_BASE_URL}/v1/security/oauth2/token"
     data = {
         'grant_type': 'client_credentials',
@@ -24,7 +22,6 @@ def get_amadeus_token():
         'client_secret': settings.AMADEUS_CLIENT_SECRET
     }
     response = requests.post(url, data=data)
-    print("Token Response:", response.status_code)
     return response.json()['access_token']
 
 
@@ -33,23 +30,37 @@ def search_flights(request):
     origin = request.GET.get('origin')
     destination = request.GET.get('destination')
     departure_date = request.GET.get('departureDate')
+    return_date = request.GET.get('returnDate')  # ← Ambil returnDate
     adults = request.GET.get('adults', 1)
 
     if not origin or not destination or not departure_date:
         return Response({'error': 'Mohon lengkapi Origin, Destination, dan Tanggal!'}, status=400)
 
     try:
-        response = amadeus.shopping.flight_offers_search.get(
-            originLocationCode=origin,
-            destinationLocationCode=destination,
-            departureDate=departure_date,
-            adults=adults,
-            max=10  
-        )
+        # Build search parameters
+        search_params = {
+            'originLocationCode': origin,
+            'destinationLocationCode': destination,
+            'departureDate': departure_date,
+            'adults': adults,
+            'max': 10
+        }
+        
+        # Add return date for round trip
+        if return_date:
+            search_params['returnDate'] = return_date
+            print(f"Round Trip Search: {origin} → {destination}, {departure_date} - {return_date}")
+        else:
+            print(f"One Way Search: {origin} → {destination}, {departure_date}")
+        
+        response = amadeus.shopping.flight_offers_search.get(**search_params)
+        
+        print(f"Found {len(response.data)} flight offers")
+        
         return Response({'results': response.data})
 
     except ResponseError as error:
-        print(f"Amadeus Error: {error}")
+        print(f"Amadeus Search Error: {error}")
         return Response({'error': 'Gagal mencari penerbangan. Cek kuota API atau rute.'}, status=400)
 
 
@@ -66,10 +77,8 @@ def book_flight_amadeus(request):
         if not flight_offer or not traveler_data:
             return Response({'error': 'Data Penerbangan atau Penumpang kurang lengkap'}, status=400)
 
-        # Get passengers list from frontend
         passengers_list = traveler_data.get('passengers', [])
         
-        # Fallback for old format (single passenger)
         if not passengers_list:
             passengers_list = [{
                 'id': 1,
@@ -80,20 +89,24 @@ def book_flight_amadeus(request):
             }]
         
         num_travelers = len(flight_offer.get('travelerPricings', []))
-        print(f"Passengers from frontend: {len(passengers_list)}")
-        print(f"Travelers in flight offer: {num_travelers}")
+        
+        # Check if round trip (has 2 itineraries)
+        num_itineraries = len(flight_offer.get('itineraries', []))
+        is_round_trip = num_itineraries == 2
+        
+        print(f"Passengers: {len(passengers_list)}")
+        print(f"Trip Type: {'Round Trip' if is_round_trip else 'One Way'}")
+        print(f"Itineraries: {num_itineraries}")
 
-        # Get fresh token
         print("\n[STEP 1] Getting Amadeus Token...")
         token = get_amadeus_token()
-        print(f"Token received: {token[:20]}...")
+        print(f"Token received: {token[:10]}...******")
         
         headers = {
             'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json'
         }
 
-        # === STEP 2: Flight Offers Pricing ===
         print("\n[STEP 2] Calling Flight Offers Pricing...")
         pricing_url = f"{AMADEUS_BASE_URL}/v1/shopping/flight-offers/pricing"
         pricing_body = {
@@ -109,14 +122,13 @@ def book_flight_amadeus(request):
         if pricing_response.status_code != 200:
             print(f"Pricing Error: {pricing_response.text}")
             return Response({
-                'error': 'Gagal validasi harga. Silakan coba flight lain atau tanggal berbeda.'
+                'error': 'Harga berubah atau penerbangan tidak tersedia. Silakan cari ulang.'
             }, status=400)
         
         pricing_data = pricing_response.json()
         validated_offer = pricing_data['data']['flightOffers'][0]
         print("Pricing validated successfully!")
 
-        # === BUILD TRAVELERS LIST FOR AMADEUS ===
         travelers_for_amadeus = []
         
         for i in range(num_travelers):
@@ -125,7 +137,6 @@ def book_flight_amadeus(request):
             else:
                 pax = passengers_list[0]
             
-            # Parse name
             names = pax['fullName'].strip().split(' ')
             first_name = names[0].upper()
             last_name = " ".join(names[1:]).upper() if len(names) > 1 else "UNKNOWN"
@@ -160,10 +171,8 @@ def book_flight_amadeus(request):
                 }]
             }
             travelers_for_amadeus.append(traveler_payload)
-            print(f"Traveler {i+1}: {first_name} {last_name}")
 
-        # === STEP 3: Create Flight Order ===
-        print(f"\n[STEP 3] Creating Flight Order with {len(travelers_for_amadeus)} travelers...")
+        print(f"\n[STEP 3] Creating Flight Order...")
         order_url = f"{AMADEUS_BASE_URL}/v1/booking/flight-orders"
         order_body = {
             'data': {
@@ -178,60 +187,65 @@ def book_flight_amadeus(request):
         
         if order_response.status_code not in [200, 201]:
             error_data = order_response.json()
-            error_detail = error_data.get('errors', [{}])[0].get('detail', 'Unknown error')
-            print(f"Order Error: {error_detail}")
-            
-            # User-friendly error messages
+            try:
+                error_detail = error_data.get('errors', [{}])[0].get('detail', 'Unknown error')
+            except:
+                error_detail = str(error_data)
+
             if 'SEGMENT SELL FAILURE' in str(error_data):
-                error_msg = 'Kursi untuk penerbangan ini sudah tidak tersedia. Silakan pilih penerbangan lain.'
-            elif 'schedule change' in str(error_data).lower():
-                error_msg = 'Jadwal penerbangan telah berubah. Silakan search ulang untuk mendapatkan data terbaru.'
+                error_msg = 'Kursi habis. Silakan pilih penerbangan lain.'
             else:
-                error_msg = f'Gagal membuat booking: {error_detail}'
+                error_msg = f'Gagal Booking: {error_detail}'
             
             return Response({'error': error_msg}, status=400)
 
         order_data = order_response.json()
         amadeus_pnr = order_data['data']['id']
-        print(f"✅ Booking SUCCESS! PNR: {amadeus_pnr}")
+        print(f"Booking SUCCESS! PNR: {amadeus_pnr}")
 
-        # Get flight details
-        itinerary = validated_offer['itineraries'][0]['segments'][0]
-        
-        # === STEP 4: Save to Database ===
         print("\n[STEP 4] Saving to database...")
         
+        # Get outbound flight info
+        outbound = validated_offer['itineraries'][0]['segments'][0]
+        
+        # Get return flight info if round trip
+        if is_round_trip:
+            return_flight = validated_offer['itineraries'][1]['segments'][0]
+            destination_code = return_flight['departure']['iataCode']
+            print(f"Round Trip: {outbound['departure']['iataCode']} ↔ {destination_code}")
+        else:
+            last_segment = validated_offer['itineraries'][0]['segments'][-1]
+            destination_code = last_segment['arrival']['iataCode']
+        
         primary_pax = passengers_list[0]
+        
         booking = Booking.objects.create(
             booking_code=amadeus_pnr, 
-            airline=itinerary['carrierCode'],
-            origin=itinerary['departure']['iataCode'],
-            destination=itinerary['arrival']['iataCode'],
-            departure_time=itinerary['departure']['at'],
+            airline=outbound['carrierCode'],
+            origin=outbound['departure']['iataCode'],
+            destination=destination_code,
+            departure_time=outbound['departure']['at'],
             price=validated_offer['price']['total'],
             passenger_name=primary_pax['fullName'],
             passport_number=primary_pax['passportNumber'],
             email=primary_pax['email']
         )
-        print(f"✅ Saved to DB with ID: {booking.id}")
+        print(f"Saved to DB with ID: {booking.id}")
 
         print("\n" + "="*50)
-        print("🎉 BOOKING COMPLETED SUCCESSFULLY!")
-        print(f"📋 Booking Code: {amadeus_pnr}")
+        print("BOOKING COMPLETED!")
         print("="*50 + "\n")
 
+        trip_type = "Round Trip" if is_round_trip else "One Way"
         return Response({
             'status': 'success',
             'booking_code': amadeus_pnr,
-            'message': f'Booking Berhasil untuk {num_travelers} penumpang!'
+            'message': f'Booking {trip_type} Berhasil! Kode: {amadeus_pnr}'
         })
 
     except Exception as e:
         print("\n" + "="*50)
-        print("❌ ERROR OCCURRED!")
+        print("CRITICAL ERROR")
         print("="*50)
-        print(f"Error Type: {type(e).__name__}")
-        print(f"Error Message: {str(e)}")
         traceback.print_exc()
-        print("="*50 + "\n")
         return Response({'error': str(e)}, status=500)

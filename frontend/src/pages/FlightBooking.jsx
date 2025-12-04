@@ -1,24 +1,29 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
-function FlightBooking({ flight, onBook, onBack, loading }) {
-  // Get number of passengers from flight offer
+function FlightBooking({ flight, onBook, onBack, loading, searchParams }) {
   const numPassengers = flight.travelerPricings?.length || 1;
+  const isRoundTrip = flight.itineraries?.length === 2;
 
-  // Initialize form data for all passengers
   const [passengers, setPassengers] = useState(() => {
     return Array.from({ length: numPassengers }, (_, index) => ({
       id: index + 1,
       fullName: "",
       passportNumber: "",
       email: "",
-      dateOfBirth: "",
       gender: "MALE",
     }));
   });
 
-  const segment = flight.itineraries[0].segments[0];
-  const lastSegment =
-    flight.itineraries[0].segments[flight.itineraries[0].segments.length - 1];
+  // Outbound flight info
+  const outbound = flight.itineraries[0];
+  const outboundSegment = outbound.segments[0];
+  const outboundLastSegment = outbound.segments[outbound.segments.length - 1];
+
+  // Return flight info (if round trip)
+  const returnFlight = flight.itineraries[1];
+  const returnSegment = returnFlight?.segments[0];
+  const returnLastSegment =
+    returnFlight?.segments[returnFlight?.segments.length - 1];
 
   const formatTime = (dateString) => {
     return new Date(dateString).toLocaleTimeString("id-ID", {
@@ -39,7 +44,7 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
   const formatPrice = (price, currency) => {
     return new Intl.NumberFormat("id-ID", {
       style: "currency",
-      currency: currency || "IDR",
+      currency: currency || "EUR",
       minimumFractionDigits: 0,
     }).format(price);
   };
@@ -54,10 +59,8 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // Send all passengers data
     onBook({
       passengers: passengers,
-      // Also send primary contact (first passenger) for backward compatibility
       fullName: passengers[0].fullName,
       passportNumber: passengers[0].passportNumber,
       email: passengers[0].email,
@@ -70,6 +73,81 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
         p.fullName.trim() !== "" &&
         p.passportNumber.trim() !== "" &&
         p.email.trim() !== ""
+    );
+  };
+
+  // Flight segment component
+  const FlightSegment = ({ segment, lastSegment, type = "outbound" }) => {
+    const isOutbound = type === "outbound";
+    const colorClass = isOutbound ? "blue" : "purple";
+
+    return (
+      <div
+        className={`p-4 rounded-xl ${
+          isOutbound ? "bg-slate-800/30" : "bg-purple-900/10"
+        }`}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <span
+            className={`px-2 py-1 bg-${colorClass}-500/10 text-${colorClass}-400 text-xs font-medium rounded-full flex items-center gap-1`}
+          >
+            <i
+              className={`fa-solid fa-plane-${
+                isOutbound ? "departure" : "arrival"
+              }`}
+            ></i>
+            {isOutbound ? "Outbound" : "Return"}
+          </span>
+          <span className="text-slate-500 text-xs">
+            {formatDate(segment.departure.at)}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-2xl font-semibold text-white">
+              {segment.departure.iataCode}
+            </p>
+            <p className="text-slate-400 text-sm flex items-center gap-1">
+              <i className="fa-regular fa-clock text-xs"></i>
+              {formatTime(segment.departure.at)}
+            </p>
+          </div>
+
+          <div className="flex-1 flex items-center justify-center px-4">
+            <div className={`w-2 h-2 rounded-full bg-${colorClass}-500`} />
+            <div
+              className={`flex-1 h-px bg-gradient-to-r from-${colorClass}-500 to-${colorClass}-400 mx-2 relative`}
+            >
+              <i
+                className={`fa-solid fa-plane absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-${colorClass}-400 bg-slate-900 px-1 text-xs`}
+              ></i>
+            </div>
+            <div className={`w-2 h-2 rounded-full bg-${colorClass}-500`} />
+          </div>
+
+          <div className="text-right">
+            <p className="text-2xl font-semibold text-white">
+              {lastSegment.arrival.iataCode}
+            </p>
+            <p className="text-slate-400 text-sm flex items-center gap-1 justify-end">
+              <i className="fa-regular fa-clock text-xs"></i>
+              {formatTime(lastSegment.arrival.at)}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
+          <span className="flex items-center gap-1">
+            <i className="fa-solid fa-plane"></i>
+            {segment.carrierCode} {segment.number}
+          </span>
+          <span className="flex items-center gap-1">
+            <i className="fa-solid fa-ticket"></i>
+            {flight.travelerPricings[0].fareDetailsBySegment[0].cabin}
+          </span>
+        </div>
+      </div>
     );
   };
 
@@ -91,72 +169,32 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
             <h2 className="text-xl font-semibold text-white mb-6 flex items-center gap-3">
               <i className="fa-solid fa-plane-departure text-blue-400"></i>
               Flight Details
+              {isRoundTrip && (
+                <span className="px-2 py-1 bg-purple-500/20 text-purple-400 text-xs rounded-full">
+                  Round Trip
+                </span>
+              )}
             </h2>
 
-            <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6 sticky top-6">
-              {/* Airline Badge */}
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg mb-6">
-                <i className="fa-solid fa-plane text-blue-400"></i>
-                <span className="text-blue-400 font-semibold">
-                  {segment.carrierCode}
-                </span>
-                <span className="text-slate-500">•</span>
-                <span className="text-slate-400 text-sm">
-                  {segment.carrierCode} {segment.number}
-                </span>
-              </div>
+            <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6 sticky top-6 space-y-4">
+              {/* Outbound Flight */}
+              <FlightSegment
+                segment={outboundSegment}
+                lastSegment={outboundLastSegment}
+                type="outbound"
+              />
 
-              {/* Route */}
-              <div className="flex items-center justify-between mb-6">
-                <div>
-                  <p className="text-3xl font-semibold text-white">
-                    {segment.departure.iataCode}
-                  </p>
-                  <p className="text-slate-400 flex items-center gap-1">
-                    <i className="fa-regular fa-clock text-xs"></i>
-                    {formatTime(segment.departure.at)}
-                  </p>
-                </div>
-
-                <div className="flex-1 flex items-center justify-center px-4">
-                  <div className="w-2 h-2 rounded-full bg-blue-500" />
-                  <div className="flex-1 h-px bg-gradient-to-r from-blue-500 to-blue-400 mx-2 relative">
-                    <i className="fa-solid fa-plane absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-400 bg-slate-900 px-1"></i>
-                  </div>
-                  <div className="w-2 h-2 rounded-full bg-blue-500" />
-                </div>
-
-                <div className="text-right">
-                  <p className="text-3xl font-semibold text-white">
-                    {lastSegment.arrival.iataCode}
-                  </p>
-                  <p className="text-slate-400 flex items-center gap-1 justify-end">
-                    <i className="fa-regular fa-clock text-xs"></i>
-                    {formatTime(lastSegment.arrival.at)}
-                  </p>
-                </div>
-              </div>
+              {/* Return Flight */}
+              {isRoundTrip && returnSegment && (
+                <FlightSegment
+                  segment={returnSegment}
+                  lastSegment={returnLastSegment}
+                  type="return"
+                />
+              )}
 
               {/* Details */}
-              <div className="space-y-3 pt-6 border-t border-slate-800">
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-500 flex items-center gap-2">
-                    <i className="fa-regular fa-calendar"></i>
-                    Date
-                  </span>
-                  <span className="text-white">
-                    {formatDate(segment.departure.at)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-slate-500 flex items-center gap-2">
-                    <i className="fa-solid fa-ticket"></i>
-                    Class
-                  </span>
-                  <span className="text-white">
-                    {flight.travelerPricings[0].fareDetailsBySegment[0].cabin}
-                  </span>
-                </div>
+              <div className="space-y-3 pt-4 border-t border-slate-800">
                 <div className="flex justify-between items-center">
                   <span className="text-slate-500 flex items-center gap-2">
                     <i className="fa-solid fa-users"></i>
@@ -166,10 +204,19 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
                     {numPassengers} Adult{numPassengers > 1 ? "s" : ""}
                   </span>
                 </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-500 flex items-center gap-2">
+                    <i className="fa-solid fa-route"></i>
+                    Trip Type
+                  </span>
+                  <span className="text-white">
+                    {isRoundTrip ? "Round Trip" : "One Way"}
+                  </span>
+                </div>
               </div>
 
               {/* Price */}
-              <div className="flex justify-between items-center pt-6 mt-6 border-t border-slate-800">
+              <div className="flex justify-between items-center pt-4 border-t border-slate-800">
                 <span className="text-slate-400 flex items-center gap-2">
                   <i className="fa-solid fa-receipt"></i>
                   Total Price
@@ -186,7 +233,7 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
             <h2 className="text-xl font-semibold text-white mb-6 flex items-center gap-3">
               <i className="fa-solid fa-user-group text-blue-400"></i>
               Passenger Information
-              <span className="text-slate-500 font-normal text-base ml-2">
+              <span className="text-slate-500 font-normal text-base">
                 ({numPassengers} passenger{numPassengers > 1 ? "s" : ""})
               </span>
             </h2>
@@ -197,7 +244,6 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
                   key={index}
                   className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6"
                 >
-                  {/* Passenger Header */}
                   <div className="flex items-center gap-3 mb-6">
                     <div className="w-10 h-10 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center">
                       <i className="fa-solid fa-user text-blue-400"></i>
@@ -217,7 +263,6 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
                   </div>
 
                   <div className="grid md:grid-cols-2 gap-4">
-                    {/* Full Name */}
                     <div className="md:col-span-2 space-y-2">
                       <label className="block text-sm font-medium text-slate-300">
                         <i className="fa-solid fa-id-card mr-2 text-slate-500"></i>
@@ -243,7 +288,6 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
                       </div>
                     </div>
 
-                    {/* Passport Number */}
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-slate-300">
                         <i className="fa-solid fa-passport mr-2 text-slate-500"></i>
@@ -268,7 +312,6 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
                       </div>
                     </div>
 
-                    {/* Gender */}
                     <div className="space-y-2">
                       <label className="block text-sm font-medium text-slate-300">
                         <i className="fa-solid fa-venus-mars mr-2 text-slate-500"></i>
@@ -294,7 +337,6 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
                       </div>
                     </div>
 
-                    {/* Email */}
                     <div className="md:col-span-2 space-y-2">
                       <label className="block text-sm font-medium text-slate-300">
                         <i className="fa-solid fa-envelope mr-2 text-slate-500"></i>
@@ -334,10 +376,7 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
                   Price Summary
                 </h3>
                 <div className="flex justify-between items-center mb-4">
-                  <span className="text-slate-400 flex items-center gap-2">
-                    <i className="fa-solid fa-user text-xs"></i>
-                    Price per person
-                  </span>
+                  <span className="text-slate-400">Price per person</span>
                   <span className="text-white">
                     {formatPrice(
                       flight.travelerPricings[0].price.total,
@@ -346,12 +385,18 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
                   </span>
                 </div>
                 <div className="flex justify-between items-center mb-4">
-                  <span className="text-slate-400 flex items-center gap-2">
-                    <i className="fa-solid fa-xmark text-xs"></i>
-                    Passengers
-                  </span>
+                  <span className="text-slate-400">Passengers</span>
                   <span className="text-white">× {numPassengers}</span>
                 </div>
+                {isRoundTrip && (
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="text-slate-400">Trip Type</span>
+                    <span className="text-purple-400 flex items-center gap-1">
+                      <i className="fa-solid fa-arrow-right-arrow-left"></i>
+                      Round Trip
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center pt-4 border-t border-slate-800">
                   <span className="text-white font-medium flex items-center gap-2">
                     <i className="fa-solid fa-wallet text-green-400"></i>
@@ -380,7 +425,6 @@ function FlightBooking({ flight, onBook, onBack, loading }) {
                 )}
               </button>
 
-              {/* Security Note */}
               <p className="text-center text-slate-500 text-sm flex items-center justify-center gap-2">
                 <i className="fa-solid fa-shield-halved text-green-500"></i>
                 Your payment information is secure and encrypted
